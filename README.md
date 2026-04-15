@@ -1,98 +1,76 @@
-# Clerk + Encore Authentication Example
+# SalesDesk — Asistentul tău de vânzări
 
-A production-ready authentication backend using [Clerk](https://clerk.com/) and [Encore.ts](https://encore.dev).
+CRM-ul care face munca de fundal ca tu să te duci doar la întâlniri cu clienții.
 
-[![Deploy to Encore](https://github.com/encoredev/examples/raw/main/assets/deploytoenc.svg)](https://app.encore.cloud/create-app/clone/ts-clerk-simple)
+Construit pe [Encore.ts](https://encore.dev) + [Clerk](https://clerk.com) + PostgreSQL.
 
-This example demonstrates:
-- Clerk session verification and user management
-- Protected API endpoints with type-safe auth data
-- Auto-provisioned PostgreSQL database for user preferences
-- Static frontend for testing authentication flow
-- User profile management with database storage
+## Ce face
 
-## Prerequisites
+- **Briefing zilnic** — asistentul îți spune ce contează azi: întâlnirile de azi, task-urile întârziate, deal-urile fierbinți, contactele pe care le-ai uitat.
+- **Pipeline Kanban** — 5 etape (New → Qualified → Meeting → Proposal → Negotiation) plus Won/Lost. Muți deal-uri cu un click.
+- **Contacte & Lead-uri** — toate persoanele pe care le cultivi, cu status și ultima atingere.
+- **Întâlniri** — programezi, marchezi ca avută, iar asistentul îți generează automat draft-ul follow-up-ului.
+- **Task-uri** — manual sau auto-create de asistent. Task-urile generate automat sunt marcate cu un badge `auto`.
+- **Sugestii per contact** — pentru fiecare contact, asistentul îți dă 2–3 acțiuni concrete potrivite cu stadiul deal-ului.
+- **Worker nocturn** — un cron rulează zilnic și creează follow-up-uri pentru contacte stagnante și deal-uri blocate.
 
-**Install Encore:**
-```bash
-# macOS
-brew install encoredev/tap/encore
+## Structura proiectului
 
-# Linux
-curl -L https://encore.dev/install.sh | bash
-
-# Windows
-iwr https://encore.dev/install.ps1 | iex
+```
+auth/        # Clerk auth handler + webhook-uri
+user/        # Profil utilizator (din starter)
+crm/         # Serviciul CRM
+  contacts.ts     # CRUD contacte
+  deals.ts        # Pipeline + deal stage transitions
+  activities.ts   # Task-uri / acțiuni
+  meetings.ts     # Întâlniri
+  assistant.ts    # Briefing zilnic, sugestii, draft follow-up, cron
+  migrations/     # Schema Postgres
+frontend/    # SPA (HTML + CSS + JS vanilla, fără build step)
 ```
 
-**Docker** (for local PostgreSQL)
+## Endpoint-uri importante
 
-**Clerk Account:**
-1. Sign up at [clerk.com](https://clerk.com/)
-2. Create a new application in the Clerk Dashboard
-3. Copy your secret key from **API Keys**
-4. Note your publishable key for the frontend
+Toate endpoint-urile `/crm/*` sunt protejate cu Clerk.
 
-## Running locally
+| Metodă | Cale | Descriere |
+|---|---|---|
+| GET | `/crm/assistant/briefing` | Briefing-ul zilnic complet |
+| GET | `/crm/assistant/contact/:id/suggest` | Sugestii next-action pentru un contact |
+| GET | `/crm/assistant/meeting/:id/followup` | Draft email follow-up după o întâlnire |
+| GET/POST/DELETE | `/crm/contacts` | CRUD contacte |
+| GET/POST/DELETE | `/crm/deals` | CRUD deal-uri |
+| POST | `/crm/deals/:id/stage` | Mută deal-ul în altă etapă |
+| GET/POST/DELETE | `/crm/activities` | CRUD task-uri |
+| POST | `/crm/activities/:id/complete` | Marchează task ca făcut |
+| GET/POST/DELETE | `/crm/meetings` | CRUD întâlniri |
+| POST | `/crm/meetings/:id/complete` | Marchează întâlnire ca avută |
 
-Clone and install dependencies:
+## Rulare locală
+
+Prerequisite: [Encore CLI](https://encore.dev/docs/install), Docker (pentru Postgres local), cont Clerk.
+
 ```bash
-git clone https://github.com/encoredev/examples
-cd examples/ts/clerk-simple
 npm install
-```
-
-Set your Clerk secret key:
-```bash
-encore secret set --dev ClerkSecretKey
-```
-
-Run the backend:
-```bash
+encore secret set --dev ClerkSecretKey   # copiat din dashboard.clerk.com
 encore run
 ```
 
-Open the frontend at `http://localhost:4000` to test the authentication flow.
+Apoi deschide `http://localhost:4000`.
 
-**Note:** Replace `YOUR_PUBLISHABLE_KEY` in `frontend/assets/index.html` with your actual Clerk publishable key from the dashboard.
+Dashboard-ul local de dezvoltare (tracing, DB, catalog): `http://localhost:9400`.
 
-View the local development dashboard at [http://localhost:9400](http://localhost:9400) to explore:
-- API documentation
-- Distributed tracing
-- Database explorer
-- Service catalog
+> **Notă:** în `frontend/assets/index.html` și `app.js` există un Clerk publishable key de test — înlocuiește-l cu al tău din dashboard-ul Clerk.
 
-## API Endpoints
+## Deploy
 
-### `GET /user/profile` (Protected)
-Get the current user's profile with preferences from the database.
+Deploy cu un singur push la Encore Cloud:
 
-Requires `Authorization: Bearer <clerk-session-token>` header.
-
-### `POST /user/preferences` (Protected)
-Update user preferences (theme, notifications, bio).
-
-### `POST /webhooks/clerk`
-Handle Clerk webhook events (user.created, user.updated, user.deleted).
-
-## Deployment
-
-Deploy to Encore Cloud:
 ```bash
 git push encore
-```
-
-Set production secrets:
-```bash
 encore secret set --prod ClerkSecretKey
 ```
 
-Configure Clerk webhooks in the dashboard to point to your deployed URL: `https://your-app.com/webhooks/clerk`
+În dashboard-ul Clerk, setează webhook-ul la `https://<app>.encr.app/webhooks/clerk`.
 
-For production deployments to your own AWS/GCP account, see [connecting your cloud](https://encore.dev/docs/platform/infrastructure/infra).
-
-## Learn More
-
-- [Complete Tutorial](https://encore.dev/blog/clerk-encore) - Step-by-step guide
-- [Encore Documentation](https://encore.dev/docs) - Framework features and concepts
-- [Clerk Documentation](https://clerk.com/docs) - User management platform details
+Pentru deploy în cloud-ul propriu (AWS/GCP), vezi [Encore infra docs](https://encore.dev/docs/platform/infrastructure/infra).
