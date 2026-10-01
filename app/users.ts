@@ -1,13 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { APIError, api } from "encore.dev/api";
-import { getAuthData } from "encore.dev/auth";
-import { hashPassword, type AccessRole, type LocalSession } from "./auth";
-import { requireOwner } from "./authorization";
-import { db } from "./db";
-
-const supportedRoles: AccessRole[] = ["owner", "editor", "approver", "viewer"];
+import { accessRoles, hashPassword, type AccessRole } from "./auth";
+import { recordAudit } from "./audit";
+import { actorWithRole } from "./authorization";
+import { db, inTransaction } from "./db";
 
 export interface UserAccount {
+  id: string;
+  username: string;
+  accessRole: AccessRole;
+  active: boolean;
+  createdAt: string;
+}
+
+interface UserRow {
   id: string;
   username: string;
   accessRole: AccessRole;
@@ -15,61 +21,110 @@ export interface UserAccount {
   createdAt: Date;
 }
 
-function ownerSession(): LocalSession {
-  const session = getAuthData<LocalSession>();
-  if (!session) throw APIError.unauthenticated("missing local session");
-  requireOwner(session);
-  return session;
+interface ListUsersResponse {
+  users: UserAccount[];
+}
+
+interface CreateUserRequest {
+  username: string;
+  password: string;
+  accessRole: AccessRole;
+}
+
+interface ChangeUserRoleRequest {
+  id: string;
+  accessRole: AccessRole;
+}
+
+function toAccount(row: UserRow): UserAccount {
+  return { ...row, createdAt: new Date(row.createdAt).toISOString() };
 }
 
 export const listUsers = api(
   { expose: true, method: "GET", path: "/users", auth: true },
-  async (): Promise<{ users: UserAccount[] }> => {
-    const session = ownerSession();
-    const users = await db.queryAll<UserAccount>`
+  async (): Promise<ListUsersResponse> => {
+    const actor = actorWithRole(["owner"]);
+    const rows = await db.queryAll<UserRow>`
       SELECT id, username, access_role AS "accessRole", active, created_at AS "createdAt"
-      FROM user_account WHERE organization_id = ${session.organizationId} ORDER BY username
+      FROM user_account
+      WHERE organization_id = ${actor.organizationId}
+      ORDER BY username
     `;
-    return { users };
+    return { users: rows.map(toAccount) };
   },
 );
 
 export const createUser = api(
   { expose: true, method: "POST", path: "/users", auth: true },
-  async (request: { username: string; password: string; accessRole: AccessRole }): Promise<UserAccount> => {
-    const session = ownerSession();
+  async (request: CreateUserRequest): Promise<UserAccount> => {
+    const actor = actorWithRole(["owner"]);
     const username = request.username.trim();
-    if (!username || request.password.length < 12 || !supportedRoles.includes(request.accessRole)) {
-      throw APIError.invalidArgument("provide a username, a password of at least 12 characters, and a supported access role");
-    }
+    if (!username) throw APIError.invalidArgument("Numele de utilizator este obligatoriu.");
+    if (request.password.length < 12) throw APIError.invalidArgument("Parola trebuie să aibă cel puțin 12 caractere.");
+    if (!accessRoles.includes(request.accessRole)) throw APIError.invalidArgument("Rolul de acces nu este suportat.");
+
+    const duplicate = await db.queryRow<{ id: string }>`SELECT id FROM user_account WHERE username = ${username}`;
+    if (duplicate) throw APIError.alreadyExists("Există deja un utilizator cu acest nume.");
+
     const id = randomUUID();
-    try {
-      await db.exec`
+    const passwordHash = await hashPassword(request.password);
+    await inTransaction(async (tx) => {
+      await tx.exec`
         INSERT INTO user_account (id, organization_id, username, password_hash, access_role, created_by_user_id, updated_by_user_id)
-        VALUES (${id}, ${session.organizationId}, ${username}, ${await hashPassword(request.password)}, ${request.accessRole}, ${session.userId}, ${session.userId});
-        INSERT INTO audit_record (id, organization_id, actor_user_id, action, subject_type, subject_id)
-        VALUES (${randomUUID()}, ${session.organizationId}, ${session.userId}, 'user_created', 'user_account', ${id});
+        VALUES (${id}, ${actor.organizationId}, ${username}, ${passwordHash}, ${request.accessRole}, ${actor.userID}, ${actor.userID})
       `;
-    } catch {
-      throw APIError.alreadyExists("a user with this username already exists");
-    }
-    return { id, username, accessRole: request.accessRole, active: true, createdAt: new Date() };
+      await recordAudit(tx, {
+        organizationId: actor.organizationId,
+        actorUserId: actor.userID,
+        action: "user_created",
+        subjectType: "user_account",
+        subjectId: id,
+        details: { accessRole: request.accessRole },
+      });
+    });
+    return { id, username, accessRole: request.accessRole, active: true, createdAt: new Date().toISOString() };
   },
 );
 
 export const changeUserRole = api(
   { expose: true, method: "PATCH", path: "/users/:id/role", auth: true },
-  async (request: { id: string; accessRole: AccessRole }): Promise<void> => {
-    const session = ownerSession();
-    if (!supportedRoles.includes(request.accessRole)) throw APIError.invalidArgument("unsupported access role");
-    const updated = await db.exec`
-      UPDATE user_account SET access_role = ${request.accessRole}, updated_at = CURRENT_TIMESTAMP, updated_by_user_id = ${session.userId}
-      WHERE id = ${request.id} AND organization_id = ${session.organizationId}
-    `;
-    if (updated.rowsAffected !== 1) throw APIError.notFound("local user not found");
-    await db.exec`
-      INSERT INTO audit_record (id, organization_id, actor_user_id, action, subject_type, subject_id, details)
-      VALUES (${randomUUID()}, ${session.organizationId}, ${session.userId}, 'user_role_changed', 'user_account', ${request.id}, ${JSON.stringify({ accessRole: request.accessRole })}::jsonb)
-    `;
+  async (request: ChangeUserRoleRequest): Promise<UserAccount> => {
+    const actor = actorWithRole(["owner"]);
+    if (!accessRoles.includes(request.accessRole)) throw APIError.invalidArgument("Rolul de acces nu este suportat.");
+
+    return inTransaction(async (tx) => {
+      const current = await tx.queryRow<{ accessRole: AccessRole }>`
+        SELECT access_role AS "accessRole" FROM user_account
+        WHERE id = ${request.id} AND organization_id = ${actor.organizationId}
+        FOR UPDATE
+      `;
+      if (!current) throw APIError.notFound("Utilizatorul local nu există.");
+
+      if (current.accessRole === "owner" && request.accessRole !== "owner") {
+        const owners = await tx.queryRow<{ count: number }>`
+          SELECT COUNT(*)::int AS count FROM user_account
+          WHERE organization_id = ${actor.organizationId} AND access_role = 'owner' AND active = TRUE
+        `;
+        if ((owners?.count ?? 0) <= 1) throw APIError.failedPrecondition("Organizația trebuie să păstreze cel puțin un Owner activ.");
+      }
+
+      const row = await tx.queryRow<UserRow>`
+        UPDATE user_account
+        SET access_role = ${request.accessRole}, updated_at = CURRENT_TIMESTAMP, updated_by_user_id = ${actor.userID}
+        WHERE id = ${request.id} AND organization_id = ${actor.organizationId}
+        RETURNING id, username, access_role AS "accessRole", active, created_at AS "createdAt"
+      `;
+      if (!row) throw APIError.notFound("Utilizatorul local nu există.");
+
+      await recordAudit(tx, {
+        organizationId: actor.organizationId,
+        actorUserId: actor.userID,
+        action: "user_role_changed",
+        subjectType: "user_account",
+        subjectId: request.id,
+        details: { from: current.accessRole, to: request.accessRole },
+      });
+      return toAccount(row);
+    });
   },
 );
