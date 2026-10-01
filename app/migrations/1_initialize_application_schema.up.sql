@@ -1,0 +1,2 @@
+-- The local application schema begins here.
+-- User, session, authorization, and domain tables are added by their owning work orders.

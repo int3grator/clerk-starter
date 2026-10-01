@@ -1,8 +1,8 @@
 {
-  "name": "clerk-simple",
+  "name": "local-org-designer",
   "private": true,
-  "version": "0.0.1",
-  "description": "Production-ready authentication with Clerk and Encore",
+  "version": "0.1.0",
+  "description": "Local Encore.ts application foundation",
   "license": "MPL-2.0",
   "type": "module",
   "devDependencies": {
@@ -10,7 +10,6 @@
     "typescript": "^5.2.2"
   },
   "dependencies": {
-    "@clerk/backend": "^2.23.0",
     "encore.dev": "^1.51.10"
   },
   "optionalDependencies": {
