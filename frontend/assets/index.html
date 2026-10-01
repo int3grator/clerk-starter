@@ -5,26 +5,79 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Local Organization Designer</title>
   <style>
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      font-family: system-ui, sans-serif;
-      background: #f7f7f5;
-      color: #1d1d1b;
-    }
-    main {
-      max-width: 40rem;
-      padding: 2rem;
-      text-align: center;
-    }
+    :root { font-family: system-ui, sans-serif; color: #1d1d1b; background: #f7f7f5; }
+    body { margin: 0; } main { max-width: 760px; margin: 0 auto; padding: 2rem; }
+    section { background: white; border: 1px solid #ddd; border-radius: 8px; padding: 1.5rem; margin: 1rem 0; }
+    form { display: grid; gap: .8rem; max-width: 420px; } input, select, button { font: inherit; padding: .65rem; }
+    button { background: #1d1d1b; color: white; border: 0; border-radius: 4px; cursor: pointer; }
+    .hidden { display: none; } .error { color: #9f1d1d; } .success { color: #175d2a; }
+    li { display: flex; gap: .8rem; align-items: center; padding: .5rem 0; border-bottom: 1px solid #eee; }
+    li select { margin-left: auto; }
   </style>
 </head>
 <body>
   <main>
     <h1>Local Organization Designer</h1>
-    <p>The local application foundation is ready.</p>
+    <p id="message" aria-live="polite"></p>
+    <section id="sign-in-section">
+      <h2>Sign in</h2>
+      <form id="sign-in-form">
+        <label>Username <input id="username" autocomplete="username" required></label>
+        <label>Password <input id="password" type="password" autocomplete="current-password" required></label>
+        <button>Sign in</button>
+      </form>
+    </section>
+    <section id="workspace" class="hidden">
+      <h2 id="welcome"></h2>
+      <button id="sign-out">Sign out</button>
+      <div id="admin" class="hidden">
+        <h2>User administration</h2>
+        <form id="create-user-form">
+          <label>Username <input id="new-username" required></label>
+          <label>Temporary password <input id="new-password" type="password" minlength="12" required></label>
+          <label>Access role <select id="new-role"><option value="owner">Owner</option><option value="editor">Editor</option><option value="approver">Approver</option><option value="viewer">Viewer</option></select></label>
+          <button>Create user</button>
+        </form>
+        <h3>Local users</h3><ul id="users"></ul>
+      </div>
+    </section>
   </main>
+  <script>
+    const message = document.getElementById('message');
+    let token = sessionStorage.getItem('local-session-token');
+    let session = null;
+    const headers = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` });
+    function showMessage(text, error = false) { message.textContent = text; message.className = error ? 'error' : 'success'; }
+    async function request(path, options = {}) {
+      const response = await fetch(path, options);
+      if (!response.ok) throw new Error((await response.text()) || 'Request failed');
+      return response.status === 204 ? null : response.json();
+    }
+    async function loadSession() {
+      if (!token) return;
+      try {
+        session = await request('/auth/session', { headers: headers() });
+        document.getElementById('sign-in-section').classList.add('hidden');
+        document.getElementById('workspace').classList.remove('hidden');
+        document.getElementById('welcome').textContent = `Signed in as ${session.username} (${session.accessRole})`;
+        if (session.accessRole === 'owner') { document.getElementById('admin').classList.remove('hidden'); await loadUsers(); }
+      } catch { token = null; sessionStorage.removeItem('local-session-token'); }
+    }
+    async function loadUsers() {
+      const { users } = await request('/users', { headers: headers() });
+      document.getElementById('users').innerHTML = '';
+      for (const user of users) {
+        const item = document.createElement('li'); item.textContent = `${user.username} (${user.active ? 'active' : 'inactive'})`;
+        const select = document.createElement('select');
+        for (const role of ['owner','editor','approver','viewer']) { const option = new Option(role, role, false, role === user.accessRole); select.add(option); }
+        select.onchange = async () => { try { await request(`/users/${user.id}/role`, { method: 'PATCH', headers: headers(), body: JSON.stringify({ accessRole: select.value }) }); showMessage('Role updated.'); } catch (error) { showMessage(error.message, true); select.value = user.accessRole; } };
+        item.append(select); document.getElementById('users').append(item);
+      }
+    }
+    document.getElementById('sign-in-form').onsubmit = async event => { event.preventDefault(); try { const result = await request('/auth/sign-in', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: document.getElementById('username').value, password: document.getElementById('password').value }) }); token = result.sessionToken; sessionStorage.setItem('local-session-token', token); showMessage('Signed in.'); await loadSession(); } catch (error) { showMessage('Authentication failed. Check your username and password.', true); } };
+    document.getElementById('sign-out').onclick = async () => { await request('/auth/sign-out', { method: 'POST', headers: headers() }); token = null; sessionStorage.removeItem('local-session-token'); location.reload(); };
+    document.getElementById('create-user-form').onsubmit = async event => { event.preventDefault(); try { await request('/users', { method: 'POST', headers: headers(), body: JSON.stringify({ username: document.getElementById('new-username').value, password: document.getElementById('new-password').value, accessRole: document.getElementById('new-role').value }) }); event.target.reset(); showMessage('User created.'); await loadUsers(); } catch (error) { showMessage(error.message, true); } };
+    loadSession();
+  </script>
 </body>
 </html>

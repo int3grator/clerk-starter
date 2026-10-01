@@ -36,7 +36,7 @@ function tokenHash(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-async function hashPassword(password: string): Promise<string> {
+export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16).toString("hex");
   const derivedKey = await scrypt(password, salt, 64) as Buffer;
   return `scrypt$${salt}$${derivedKey.toString("hex")}`;
@@ -117,12 +117,7 @@ export const signIn = api(
     `;
     return {
       sessionToken,
-      session: {
-        userId: user.id,
-        organizationId: user.organization_id,
-        username: user.username,
-        accessRole: user.access_role,
-      },
+      session: { userId: user.id, organizationId: user.organization_id, username: user.username, accessRole: user.access_role },
     };
   },
 );
@@ -132,10 +127,7 @@ export const signOut = api.raw(
   async (req, res) => {
     const token = req.headers.authorization?.replace("Bearer ", "");
     if (token) {
-      await db.exec`
-        UPDATE local_session SET terminated_at = CURRENT_TIMESTAMP
-        WHERE token_hash = ${tokenHash(token)} AND terminated_at IS NULL
-      `;
+      await db.exec`UPDATE local_session SET terminated_at = CURRENT_TIMESTAMP WHERE token_hash = ${tokenHash(token)} AND terminated_at IS NULL`;
     }
     res.writeHead(204);
     res.end();
