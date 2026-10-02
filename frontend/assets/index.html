@@ -1,83 +1,55 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="ro">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Local Organization Designer</title>
-  <style>
-    :root { font-family: system-ui, sans-serif; color: #1d1d1b; background: #f7f7f5; }
-    body { margin: 0; } main { max-width: 760px; margin: 0 auto; padding: 2rem; }
-    section { background: white; border: 1px solid #ddd; border-radius: 8px; padding: 1.5rem; margin: 1rem 0; }
-    form { display: grid; gap: .8rem; max-width: 420px; } input, select, button { font: inherit; padding: .65rem; }
-    button { background: #1d1d1b; color: white; border: 0; border-radius: 4px; cursor: pointer; }
-    .hidden { display: none; } .error { color: #9f1d1d; } .success { color: #175d2a; }
-    li { display: flex; gap: .8rem; align-items: center; padding: .5rem 0; border-bottom: 1px solid #eee; }
-    li select { margin-left: auto; }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SkalX Org Designer</title>
+<link rel="stylesheet" href="/styles.css">
+<script type="module" src="/js/app.js"></script>
 </head>
 <body>
-  <main>
-    <h1>Local Organization Designer</h1>
-    <p id="message" aria-live="polite"></p>
-    <section id="sign-in-section">
-      <h2>Sign in</h2>
-      <form id="sign-in-form">
-        <label>Username <input id="username" autocomplete="username" required></label>
-        <label>Password <input id="password" type="password" autocomplete="current-password" required></label>
-        <button>Sign in</button>
-      </form>
-    </section>
-    <section id="workspace" class="hidden">
-      <h2 id="welcome"></h2>
-      <button id="sign-out">Sign out</button>
-      <div id="admin" class="hidden">
-        <h2>User administration</h2>
-        <form id="create-user-form">
-          <label>Username <input id="new-username" required></label>
-          <label>Temporary password <input id="new-password" type="password" minlength="12" required></label>
-          <label>Access role <select id="new-role"><option value="owner">Owner</option><option value="editor">Editor</option><option value="approver">Approver</option><option value="viewer">Viewer</option></select></label>
-          <button>Create user</button>
-        </form>
-        <h3>Local users</h3><ul id="users"></ul>
+
+<section class="signin" id="sign-in" hidden>
+  <form class="card-form" id="sign-in-form">
+    <h1>SkalX Org Designer</h1>
+    <p class="lede">Autentifică-te cu contul local.</p>
+    <label class="field">Nume de utilizator<input id="username" autocomplete="username" required></label>
+    <label class="field">Parolă<input id="password" type="password" autocomplete="current-password" required></label>
+    <button class="btn primary" type="submit">Autentificare</button>
+    <p class="form-message" id="sign-in-message" role="alert"></p>
+  </form>
+</section>
+
+<div id="app" hidden>
+  <header class="top">
+    <div class="session-row">
+      <div class="inline">
+        <label class="inline" id="chart-picker">Organigramă <select id="chart-select"></select></label>
+        <button class="btn" id="new-chart" type="button" data-action="new-chart">Organigramă nouă</button>
       </div>
-    </section>
-  </main>
-  <script>
-    const message = document.getElementById('message');
-    let token = sessionStorage.getItem('local-session-token');
-    let session = null;
-    const headers = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` });
-    function showMessage(text, error = false) { message.textContent = text; message.className = error ? 'error' : 'success'; }
-    async function request(path, options = {}) {
-      const response = await fetch(path, options);
-      if (!response.ok) throw new Error((await response.text()) || 'Request failed');
-      return response.status === 204 ? null : response.json();
-    }
-    async function loadSession() {
-      if (!token) return;
-      try {
-        session = await request('/auth/session', { headers: headers() });
-        document.getElementById('sign-in-section').classList.add('hidden');
-        document.getElementById('workspace').classList.remove('hidden');
-        document.getElementById('welcome').textContent = `Signed in as ${session.username} (${session.accessRole})`;
-        if (session.accessRole === 'owner') { document.getElementById('admin').classList.remove('hidden'); await loadUsers(); }
-      } catch { token = null; sessionStorage.removeItem('local-session-token'); }
-    }
-    async function loadUsers() {
-      const { users } = await request('/users', { headers: headers() });
-      document.getElementById('users').innerHTML = '';
-      for (const user of users) {
-        const item = document.createElement('li'); item.textContent = `${user.username} (${user.active ? 'active' : 'inactive'})`;
-        const select = document.createElement('select');
-        for (const role of ['owner','editor','approver','viewer']) { const option = new Option(role, role, false, role === user.accessRole); select.add(option); }
-        select.onchange = async () => { try { await request(`/users/${user.id}/role`, { method: 'PATCH', headers: headers(), body: JSON.stringify({ accessRole: select.value }) }); showMessage('Role updated.'); } catch (error) { showMessage(error.message, true); select.value = user.accessRole; } };
-        item.append(select); document.getElementById('users').append(item);
-      }
-    }
-    document.getElementById('sign-in-form').onsubmit = async event => { event.preventDefault(); try { const result = await request('/auth/sign-in', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: document.getElementById('username').value, password: document.getElementById('password').value }) }); token = result.sessionToken; sessionStorage.setItem('local-session-token', token); showMessage('Signed in.'); await loadSession(); } catch (error) { showMessage('Authentication failed. Check your username and password.', true); } };
-    document.getElementById('sign-out').onclick = async () => { await request('/auth/sign-out', { method: 'POST', headers: headers() }); token = null; sessionStorage.removeItem('local-session-token'); location.reload(); };
-    document.getElementById('create-user-form').onsubmit = async event => { event.preventDefault(); try { await request('/users', { method: 'POST', headers: headers(), body: JSON.stringify({ username: document.getElementById('new-username').value, password: document.getElementById('new-password').value, accessRole: document.getElementById('new-role').value }) }); event.target.reset(); showMessage('User created.'); await loadUsers(); } catch (error) { showMessage(error.message, true); } };
-    loadSession();
-  </script>
+      <div class="inline"><span id="session-label"></span><button class="btn" id="sign-out" type="button">Deconectare</button></div>
+    </div>
+    <h1 id="chart-title">SkalX Org Designer</h1>
+    <p class="lede" id="lede"></p>
+    <p class="principle" id="tagline" hidden></p>
+  </header>
+
+  <div class="bar" role="toolbar" aria-label="Controale organigramă">
+    <div class="bar-in">
+      <div class="seg" id="views"></div>
+      <div class="grp" id="phase-group"><span>Faza</span><div class="seg" id="phases"></div></div>
+      <input type="search" id="q" placeholder="Caută rol, KPI, responsabilitate" aria-label="Caută">
+      <label class="chk" id="only-wrap"><input type="checkbox" id="only"> Doar modificările</label>
+    </div>
+  </div>
+
+  <div class="notice" id="readonly-banner" hidden></div>
+  <div class="notice" id="notice" role="status" aria-live="polite" hidden></div>
+
+  <main id="workspace"></main>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="d-title" aria-hidden="true"></aside>
 </body>
 </html>
