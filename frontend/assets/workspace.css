@@ -1,0 +1,9 @@
+/* Governance, phase, version, and exchange workspaces. */
+.gov-meta{margin:-4px 0 10px}
+.section-gap{margin-top:40px!important}
+.matrix select,.matrix input{width:100%;max-width:240px}
+table.data tr.flag td{background:var(--warn-soft)}
+table.data td .btn{padding:3px 8px;font-size:13px}
+.actions-cell{white-space:nowrap}
+fieldset.field{border:0;padding:0;margin:0}
+fieldset.field legend{padding:0;margin-bottom:4px}
